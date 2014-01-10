@@ -124,8 +124,10 @@ __cli__
 	.version(version)
 	.usage(usage)
 	.option("", "\nCommands\n".red)
+	.option("-h, --halt", "Stop all running scripts of " + 'forever'.green + ".")
 	.option("-s, --start [file]", "Start server using node [optional file] (default to development mode)" + "\n\nStart options:\n".blue, fileinput)
 	.option("-p, --production [port]", "Start server in " + "deployment".rainbow.bold.italic.underline + " mode. [optional port #, default: 80] (option of --start)", portinput)
+	.option("-d, --debug", "Debug".cyan + " server using command line.  (option of --start, not compatible with nodemon / forever)")
 	.option("-f, --forever", "Start server with " + 'forever'.red + ".  (option of --start)")
 	.parse(process.argv)
 
@@ -134,47 +136,68 @@ __cli__
 #-------------------------------------------------------------------------------------
 main = (callback) ->
 	if __cli__.start
-		if (__cli__.production) 
-			p('Starting server in production mode'.green)
-		else 
-			p('Starting server in development mode'.green)
-			__async__.series([(callback) ->
+			# p('Starting server in development mode'.green)
+		__async__.series([(callback) ->
+			if (!__cli__.production)
 				cmd = 'scripts/pre-dev.sh'
 				p('Starting database for development'.green)
 				run(cmd, callback)
-			, (callback) ->
+			else callback()
+		, (callback) ->
+			if (!__cli__.production)
 				process.on('SIGINT', () ->
 					process.exit()
 				)
 				process.on('exit', () ->
-					p('Stopping database for development'.red)
-					cmd = 'scripts/post-dev.sh'
-					run(cmd, callback)
+					if (!__cli__.forever)
+						p('Stopping database for development'.red)
+						cmd = 'scripts/post-dev.sh'
+						run(cmd, callback)
 				)
 				callback()
-			, (callback) ->
-				appToLaunch = if process.platform != 'darwin' then 'supervisor' else 'nodemon'
-				portToLaunch = if port then port else '3000'
-				fileToLaunch = 'dot.js'
-				server = null
-				childEnv  = process.env
-				childEnv.NODE_ENV = 'development'
-				childEnv.PORT = portToLaunch if (portToLaunch)
+			else callback()
+		, (callback) ->
+			appToLaunch = if __cli__.forever then 'forever' else (if process.platform != 'darwin' then 'supervisor' else 'nodemon')
+			envToLaunch  = if __cli__.production then 'production' else 'development'
+			fileToLaunch = if __cli__.production then 'line.js' else 'dot.js'
+			portToLaunch = if port then port else if __cli__.production then '80' else '3000'
+			if (!fileToLaunch || !__fs__.existsSync(fileToLaunch))
+				if (fileToLaunch) console.log((fileToLaunch+' not found.').red)
+				else console.log('No valid node.js app found.'.red)
+				return
 
+			server = null
+			childEnv  = process.env
+			childEnv.NODE_ENV = envToLaunch
+			childEnv.PORT = portToLaunch if (portToLaunch)
+
+			msg = 'Starting server with ' + appToLaunch + ' in ' + envToLaunch + ' mode using port ' + portToLaunch
+			p(msg.green)
+
+			if __cli__.debug
+				nodemon = if process.platform != 'darwin' then 'node' else 'nodemon'
+				server = __cp__.spawn(nodemon, ['debug', fileToLaunch], {stdio: 'inherit', env: childEnv})
+			else
 				if process.platform != 'darwin'
 					if (__cli__.forever)
-						server = __cp__.spawn('/usr/bin/sudo', ['-E', 'forever', 'start', '-c', appToLaunch, fileToLaunch], {stdio: 'inherit', env: childEnv})
+						server = __cp__.spawn('/usr/bin/sudo', ['-E', appToLaunch, 'start', '-c', appToLaunch, fileToLaunch], {stdio: 'inherit', env: childEnv})
 					else
 						server = __cp__.spawn('/usr/bin/sudo', ['-E', appToLaunch, fileToLaunch], {stdio: 'inherit', env: childEnv})
 				else
 					if (__cli__.forever)
-						server = __cp__.spawn('forever', ['start', '-c', appToLaunch, fileToLaunch], {stdio: 'inherit', env: childEnv})
+						server = __cp__.spawn(appToLaunch, ['start', '-c', appToLaunch, fileToLaunch], {stdio: 'inherit', env: childEnv})
 					else
 						server = __cp__.spawn(appToLaunch, [fileToLaunch], {stdio: 'inherit', env: childEnv})
-				server.on('exit', () ->
-					callback()
-				)
-			])
+
+			server.on('exit', () ->
+				callback()
+			)
+		])
+	else if __cli__.halt
+		__async__.series([(callback) ->
+			run('sudo forever stopall', callback)
+		])
+
 	else __cli__.help()
 	callback()
 
