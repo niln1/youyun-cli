@@ -1,0 +1,189 @@
+#!/usr/bin/env coffee
+
+#-------------------------------------------------------------------------------------
+# Modules
+#-------------------------------------------------------------------------------------
+
+__cheerio__ = require('cheerio')
+__colors__ = require("colors")
+__async__ = require("async")
+__walk__ = require("walk")
+__path__ = require("path")
+__cli__ = require("commander")
+__cp__ = require("child_process")
+__fs__ = require('fs')
+
+#-------------------------------------------------------------------------------------
+# Variables
+#-------------------------------------------------------------------------------------
+
+version = require('./package.json').version
+
+usageHelper = "-s [-p <PORT> | -f]".green
+usage  = usageHelper + "\n\t yy " + usageHelper
+
+file = null
+port = null
+test = null
+config = null
+browser = null
+expandFolders = null
+target = 1 # 0: server, 1: all, 2: karma, 3: selenium
+opencmd = if (process.platform != 'darwin') then 'xdg-open' else 'open'
+
+#-------------------------------------------------------------------------------------
+# Inputs
+#-------------------------------------------------------------------------------------
+
+fileinput = (val) ->
+	file = val
+portinput = (val) ->
+	port = val
+
+#-------------------------------------------------------------------------------------
+# Automatic update
+#-------------------------------------------------------------------------------------
+
+update = (callback) ->
+	__async__.waterfall([(callback) ->
+		process.stdout.write('Checking youyun-cli version ... '.green)
+
+		cmd = 'npm show youyun-cli version'
+		exec(cmd, (data) ->
+			data = data.replace(/\s+/g, '');
+			callback(null, data == version)
+		)
+
+	, (isLatest, callback) ->
+		if isLatest
+			console.log('Already at latest version'.green)
+			callback()
+		else
+			console.log('Updating youyun-cli'.green)
+			if (process.platform != 'darwin') # Ubuntu
+				cmd = 'sudo npm i -g youyun-cli'
+			else
+				cmd = 'npm i -g youyun-cli'
+			run(cmd, () ->
+				console.log('Please rerun your previous script command.'.green) if (!__cli__.update)
+				process.kill()
+			)
+	], (err, results) ->
+		callback() if callback
+	)
+
+#-------------------------------------------------------------------------------------
+# Helper
+#-------------------------------------------------------------------------------------
+
+p = (input) ->
+	console.log(input)
+
+run = (cmd, callback, hideStdIO) ->
+	sys = __cp__.exec(cmd, (err, stdout, stderr) ->)
+
+	if (!hideStdIO)
+
+		sys.stdout.on('data', (data) ->
+			process.stdout.write(data)
+		)
+
+		sys.stderr.on('data', (data) ->
+			process.stderr.write(data)
+		)
+
+	sys.on('exit', (code, signal) ->
+		callback(null, code, signal) if callback
+	)
+
+exec = (cmd, callback, hideStdIO) ->
+	sys = __cp__.exec(cmd, (err, stdout, stderr) ->)
+	ret = null
+	if (!hideStdIO)
+		sys.stdout.on('data', (data) ->
+			ret = data
+		)
+
+	sys.on('exit', () ->
+		callback(ret) if callback
+	)
+
+#-------------------------------------------------------------------------------------
+# Check if in project root
+#-------------------------------------------------------------------------------------
+
+if !__fs__.existsSync('./package.json')
+	console.log('Must run cupcake in root directory of the project.'.red)
+	return
+
+#-------------------------------------------------------------------------------------
+# Define cli options
+#-------------------------------------------------------------------------------------
+
+__cli__
+	.version(version)
+	.usage(usage)
+	.option("", "\nCommands\n".red)
+	.option("-s, --start [file]", "Start server using node [optional file] (default to development mode)" + "\n\nStart options:\n".blue, fileinput)
+	.option("-p, --production [port]", "Start server in " + "deployment".rainbow.bold.italic.underline + " mode. [optional port #, default: 80] (option of --start)", portinput)
+	.option("-f, --forever", "Start server with " + 'forever'.red + ".  (option of --start)")
+	.parse(process.argv)
+
+#-------------------------------------------------------------------------------------
+# Main
+#-------------------------------------------------------------------------------------
+main = (callback) ->
+	if __cli__.start
+		if (__cli__.production) 
+			p('Starting server in production mode'.green)
+		else 
+			p('Starting server in development mode'.green)
+			__async__.series([(callback) ->
+				cmd = 'scripts/pre-dev.sh'
+				p('Starting database for development'.green)
+				run(cmd, callback)
+			, (callback) ->
+				process.on('SIGINT', () ->
+					process.exit()
+				)
+				process.on('exit', () ->
+					p('Stopping database for development'.red)
+					cmd = 'scripts/post-dev.sh'
+					run(cmd, callback)
+				)
+				callback()
+			, (callback) ->
+				appToLaunch = if process.platform != 'darwin' then 'supervisor' else 'nodemon'
+				portToLaunch = if port then port else '3000'
+				fileToLaunch = 'dot.js'
+				server = null
+				childEnv  = process.env
+				childEnv.NODE_ENV = 'development'
+				childEnv.PORT = portToLaunch if (portToLaunch)
+
+				if process.platform != 'darwin'
+					if (__cli__.forever)
+						server = __cp__.spawn('/usr/bin/sudo', ['-E', 'forever', 'start', '-c', appToLaunch, fileToLaunch], {stdio: 'inherit', env: childEnv})
+					else
+						server = __cp__.spawn('/usr/bin/sudo', ['-E', appToLaunch, fileToLaunch], {stdio: 'inherit', env: childEnv})
+				else
+					if (__cli__.forever)
+						server = __cp__.spawn('forever', ['start', '-c', appToLaunch, fileToLaunch], {stdio: 'inherit', env: childEnv})
+					else
+						server = __cp__.spawn(appToLaunch, [fileToLaunch], {stdio: 'inherit', env: childEnv})
+				server.on('exit', () ->
+					callback()
+				)
+			])
+	else __cli__.help()
+	callback()
+
+#-------------------------------------------------------------------------------------
+# IcyCupCake Code Entry Point
+#-------------------------------------------------------------------------------------
+
+__async__.series([(callback) ->
+	if __cli__.skip then callback() else update(callback)
+, (callback) ->
+	main(callback)
+])
