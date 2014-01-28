@@ -1,6 +1,6 @@
 {
     "name": "youyun-cli",
-    "version": "0.0.4",
+    "version": "0.0.7",
     "description": "Command line helper",
     "preferGlobal": "true",
     "bin": {
@@ -11,14 +11,10 @@
         "node": "*"
     },
     "dependencies": {
-        "async": "*",
-        "commander": "*",
-        "colors": "*",
-        "coffee-script": "*",
-        "mocha": "~1.12.0",
-        "chai": "~1.7.2",
-        "walk": "~2.2.1",
-        "cheerio": "~0.12.1"
+        "nconf": "~0.6.9",
+        "celeri": "~0.3.3",
+        "async": "~0.2.10",
+        "colors": "~0.6.2"
     },
     "repository": {
         "type": "git",

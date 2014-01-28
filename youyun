@@ -4,86 +4,28 @@
 # Modules
 #-------------------------------------------------------------------------------------
 
-__cheerio__ = require('cheerio')
-__colors__ = require("colors")
-__async__ = require("async")
-__walk__ = require("walk")
-__path__ = require("path")
-__cli__ = require("commander")
-__cp__ = require("child_process")
-__fs__ = require('fs')
-
-#-------------------------------------------------------------------------------------
-# Variables
-#-------------------------------------------------------------------------------------
-
-version = require('./package.json').version
-
-usageHelper = "-s [-p <PORT> | -f]".green
-usage  = usageHelper + "\n\t yy " + usageHelper
-
-file = null
-port = null
-test = null
-config = null
-browser = null
-expandFolders = null
-target = 1 # 0: server, 1: all, 2: karma, 3: selenium
-opencmd = if (process.platform != 'darwin') then 'xdg-open' else 'open'
-
-#-------------------------------------------------------------------------------------
-# Inputs
-#-------------------------------------------------------------------------------------
-
-fileinput = (val) ->
-	file = val
-portinput = (val) ->
-	port = val
-
-#-------------------------------------------------------------------------------------
-# Automatic update
-#-------------------------------------------------------------------------------------
-
-update = (callback) ->
-	__async__.waterfall([(callback) ->
-		process.stdout.write('Checking youyun-cli version ... '.green)
-
-		cmd = 'npm show youyun-cli version'
-		exec(cmd, (data) ->
-			data = data.replace(/\s+/g, '');
-			callback(null, data == version)
-		)
-
-	, (isLatest, callback) ->
-		if isLatest
-			console.log('Already at latest version'.green)
-			callback()
-		else
-			console.log('Updating youyun-cli'.green)
-			if (process.platform != 'darwin') # Ubuntu
-				cmd = 'sudo npm i -g youyun-cli'
-			else
-				cmd = 'npm i -g youyun-cli'
-			run(cmd, () ->
-				console.log('Please rerun your previous script command.'.green) if (!__cli__.update)
-				process.kill()
-			)
-	], (err, results) ->
-		callback() if callback
-	)
+fs = require 'fs'
+cp = require 'child_process'
+cli = require 'celeri'
+async = require 'async'
+colors = require 'colors'
 
 #-------------------------------------------------------------------------------------
 # Helper
 #-------------------------------------------------------------------------------------
 
-p = (input) ->
-	console.log(input)
+sudo = if (process.platform != 'darwin') then 'sudo ' else ''
+scriptDir = 'utilities/scripts/'
 
-run = (cmd, callback, hideStdIO) ->
-	sys = __cp__.exec(cmd, (err, stdout, stderr) ->)
+String.prototype.contains = (text) ->
+	return this.indexOf(text) != -1
+
+exec = (cmd, callback, hideStdIO) ->
+	console.log('===> '.yellow + cmd.green)
+
+	sys = cp.exec(cmd, (err, stdout, stderr) ->)
 
 	if (!hideStdIO)
-
 		sys.stdout.on('data', (data) ->
 			process.stdout.write(data)
 		)
@@ -96,23 +38,13 @@ run = (cmd, callback, hideStdIO) ->
 		callback(null, code, signal) if callback
 	)
 
-exec = (cmd, callback, hideStdIO) ->
-	sys = __cp__.exec(cmd, (err, stdout, stderr) ->)
-	ret = null
-	if (!hideStdIO)
-		sys.stdout.on('data', (data) ->
-			ret = data
-		)
-
-	sys.on('exit', () ->
-		callback(ret) if callback
-	)
+	return sys
 
 #-------------------------------------------------------------------------------------
 # Check if in project root
 #-------------------------------------------------------------------------------------
 
-if !__fs__.existsSync('./package.json')
+if !fs.existsSync('./package.json')
 	console.log('Must run cupcake in root directory of the project.'.red)
 	return
 
@@ -120,93 +52,135 @@ if !__fs__.existsSync('./package.json')
 # Define cli options
 #-------------------------------------------------------------------------------------
 
-__cli__
-	.version(version)
-	.usage(usage)
-	.option("", "\nCommands\n".red)
-	.option("-h, --halt", "Stop all running scripts of " + 'forever'.green + ".")
-	.option("-s, --start [file]", "Start server using node [optional file] (default to development mode)" + "\n\nStart options:\n".blue, fileinput)
-	.option("-p, --production [port]", "Start server in " + "deployment".rainbow.bold.italic.underline + " mode. [optional port #, default: 80] (option of --start)", portinput)
-	.option("-d, --debug", "Debug".cyan + " server using command line.  (option of --start, not compatible with nodemon / forever)")
-	.option("-f, --forever", "Start server with " + 'forever'.red + ".  (option of --start)")
-	.parse(process.argv)
+cli
+.option({
+	command: 't OR test',
+	description: 'Test'.yellow + ' the code. (alias: t)',
+	defaults: {
+		'target': 'all',
+		'file': '*'
+	}, optional: {
+		'target': 'Test server using ' + 'target'.yellow + ' specified. \n(backend-unit / bu, backend-integration / bi, frontend-unit / fu, frontend-integration / fi & all)',
+		'file': 'Test server using ' + 'file'.red + ' specified.'
+	}
+}, (data) ->
+	target = data.target
+	file = data.file
 
-#-------------------------------------------------------------------------------------
-# Main
-#-------------------------------------------------------------------------------------
-main = (callback) ->
-	if __cli__.start
-			# p('Starting server in development mode'.green)
-		__async__.series([(callback) ->
-			if (!__cli__.production)
-				cmd = 'scripts/pre-dev.sh'
-				p('Starting database for development'.green)
-				run(cmd, callback)
-			else callback()
-		, (callback) ->
-			if (!__cli__.production)
-				process.on('SIGINT', () ->
-					process.exit()
-				)
-				process.on('exit', () ->
-					if (!__cli__.forever)
-						p('Stopping database for development'.red)
-						cmd = 'scripts/post-dev.sh'
-						run(cmd, callback)
-				)
-				callback()
-			else callback()
-		, (callback) ->
-			appToLaunch = if __cli__.forever then 'forever' else (if process.platform != 'darwin' then 'supervisor' else 'nodemon')
-			envToLaunch  = if __cli__.production then 'production' else 'development'
-			fileToLaunch = if __cli__.production then 'line.js' else 'dot.js'
-			portToLaunch = if port then port else if __cli__.production then '80' else '3000'
-			if (!fileToLaunch || !__fs__.existsSync(fileToLaunch))
-				if (fileToLaunch) console.log((fileToLaunch+' not found.').red)
-				else console.log('No valid node.js app found.'.red)
-				return
+	if ((target == 'all' && file != '*') || (target != 'all' && file == '*')) 
+		console.log("Error: target & file must all be specified.".red);
+		return
 
-			server = null
-			childEnv  = process.env
-			childEnv.NODE_ENV = envToLaunch
-			childEnv.PORT = portToLaunch if (portToLaunch)
+	async.series([(callback) ->
+		if (data.production || data.nginx) 
+			return callback()
 
-			msg = 'Starting server with ' + appToLaunch + ' in ' + envToLaunch + ' mode using port ' + portToLaunch
-			p(msg.green)
+		process.on('SIGINT', () ->
+			console.log('SIGINT'.yellow)
+			process.exit()
+		)
+		process.on('exit', () ->
+			console.log('EXIT'.red)
+			cmd =  scriptDir + 'post-dev.sh'
+			exec(cmd, callback)
+		)
+		callback(null, [0, null])
+	, (callback) ->
+		cmd =  scriptDir + 'pre-dev.sh'
+		exec(cmd, callback)
+	, (callback) ->
+		if (target == 'all' || target == 'backend-unit' || target == 'bu')
+			file = if (target != 'all') then data.file else '`find server -path "*/tests/ut_*_spec.js"`';
+			cmd = 'mocha ' + file + ' -R spec'
+			exec(cmd, callback)
+		else callback(null, [0, null])
+	, (callback) ->
+		if (target == 'all' || target == 'backend-integration' || target == 'bi')
+			file = if (target != 'all') then data.file else '`find server -path "*/tests/int_*_spec.js"`';
+			cmd = 'mocha ' + file + ' -R spec'
+			exec(cmd, callback)
+		else callback(null, [0, null])
+	, (callback) ->
+		if (target == 'all' || target == 'frontend-unit' || target == 'frontend-integration' || target == 'fu' || target == 'fi')
+			cmd = if (data.production || data.nginx) then 'grunt build' else 'grunt build-dev'
+			exec(cmd, callback)
+		else callback(null, [0, null])
+	], (err, results)->
+		exitCode = 0
+		for i in results
+			if (i.length) then exitCode += i[0]
+		process.exit(exitCode)
+	);
+)
+.option({
+	command: 's OR start',
+	description: 'Start'.red + ' the server (alias: s)',
+	defaults: {
+		'port': 3000,
+		'file': 'dot.js',
+		'forever': false,
+		'nginx': false,
+		'production': false
+	},
+	optional: {
+		'forever': 'Start server using ' + 'forever'.magenta + '.',
+		'file': 'Start server using ' + 'file'.blue + ' specified.',
+		'port': 'Start server using ' + 'port'.cyan + ' number specified.',
+		'nginx': 'Start server in ' + 'nginx'.yellow + ' mode.',
+		'production': 'Start server in ' + 'production'.red + ' mode.'
+	}
+}, (data) ->
+	async.series([(callback) ->
+		cmd = if (data.production || data.nginx) then 'grunt build' else 'grunt build-dev'
+		exec(cmd, callback)
+	, (callback) ->
+		if (data.production || data.nginx) 
+			return callback()
 
-			if __cli__.debug
-				nodemon = if process.platform != 'darwin' then 'node' else 'nodemon'
-				server = __cp__.spawn(nodemon, ['debug', fileToLaunch], {stdio: 'inherit', env: childEnv})
-			else
-				if process.platform != 'darwin'
-					if (__cli__.forever)
-						server = __cp__.spawn('/usr/bin/sudo', ['-E', appToLaunch, 'start', '-c', appToLaunch, fileToLaunch], {stdio: 'inherit', env: childEnv})
-					else
-						server = __cp__.spawn('/usr/bin/sudo', ['-E', appToLaunch, fileToLaunch], {stdio: 'inherit', env: childEnv})
-				else
-					if (__cli__.forever)
-						server = __cp__.spawn(appToLaunch, ['start', '-c', appToLaunch, fileToLaunch], {stdio: 'inherit', env: childEnv})
-					else
-						server = __cp__.spawn(appToLaunch, [fileToLaunch], {stdio: 'inherit', env: childEnv})
+		process.on('SIGINT', () ->
+			console.log('SIGINT'.yellow)
+			process.exit()
+		)
+		process.on('exit', () ->
+			console.log('EXIT'.red)
+			cmd =  scriptDir + 'post-dev.sh'
+			exec(cmd, callback)
+		)
 
-			server.on('exit', () ->
-				callback()
-			)
-		])
-	else if __cli__.halt
-		__async__.series([(callback) ->
-			run('sudo forever stopall', callback)
-		])
+		callback()
+	, (callback) ->
+		cmd =  scriptDir + 'pre-dev.sh'
+		exec(cmd, callback)
+	, (callback) ->
+		file = data.file
 
-	else __cli__.help()
-	callback()
+		exe = if (data.forever) then 'forever' else (if (process.platform == 'darwin') then 'nodemon' else 'supervisor')
 
-#-------------------------------------------------------------------------------------
-# IcyCupCake Code Entry Point
-#-------------------------------------------------------------------------------------
+		argv = []
+		if (data.port <= 1024) 
+			argv.push(exe)
+			exe = 'sudo'
 
-__async__.series([(callback) ->
-	if __cli__.skip then callback() else update(callback)
-, (callback) ->
-	main(callback)
-])
+		if (data.production || data.nginx) 
+			argv push('start')
+
+		argv.push(file)
+
+		env = if (data.nginx) then 'nginx' else (if (data.production) then 'production' else 'development')
+		argv.push('--ENV')
+		argv.push(env)
+		argv.push('--PORT')
+		argv.push(data.port)
+
+		childEnv = process.env
+		childEnv.NODE_ENV = env		
+		childEnv.PORT = data.port
+
+		server = cp.spawn(exe, argv, {stdio: 'inherit', env: childEnv})
+		server.on('exit', () ->
+			callback()
+		)
+	])
+)
+
+cli.parse(process.argv)
