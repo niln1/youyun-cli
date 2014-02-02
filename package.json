@@ -1,0 +1,23 @@
+{
+    "name": "youyun-cli",
+    "version": "0.0.7",
+    "description": "Command line helper",
+    "preferGlobal": "true",
+    "bin": {
+        "yy": "youyun"
+    },
+    "author": "Ranchao Zhang",
+    "engines": {
+        "node": "*"
+    },
+    "dependencies": {
+        "nconf": "~0.6.9",
+        "celeri": "~0.3.3",
+        "async": "~0.2.10",
+        "colors": "~0.6.2"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git@github.com:chamrc/youyun-cli.git"
+    }
+}
