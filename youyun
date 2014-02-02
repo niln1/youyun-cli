@@ -182,5 +182,15 @@ cli
 		)
 	])
 )
+.option({
+	command: 'v OR version',
+	description: 'Version'.grey + ' of CLI (alias: v)'
+}, (data) ->
+	pkg = require(__dirname + '/package.json')
+	console.log(pkg.version.green)
+)
 
-cli.parse(process.argv)
+cli.parse(process.argv, (err, cmd) ->
+	if (!err && cmd.command && (cmd.command.length == 0 || (cmd.command.length != 0 && cmd.command[0].charAt(0) == '-')))
+		console.log('Refer to ' + 'yy help'.red + ' for usage')
+)
