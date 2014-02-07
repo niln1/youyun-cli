@@ -238,8 +238,8 @@ cli.option({
 				argv.push(exe);
 				exe = 'sudo';
 			}
-			if (data.production || data.nginx) {
-				argv(push('start'));
+			if (data.forever) {
+				argv.push('start');
 			}
 			argv.push(file);
 			env = data.nginx ? 'nginx' : (data.production ? 'production' : 'development');
